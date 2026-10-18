@@ -457,16 +457,42 @@ local function StackSize(id)
     return (type(s) == "number" and s > 0) and s or 200
 end
 
--- Room in the quiver / pouch for the target (bags of the weapon's family).
-local function QuiverRoom(family, stack)
-    if not (family and CNumSlots and CFree) then return 0 end
-    local slots = 0
-    for bag = 1, NUM_BAGS do
-        local _, fam = CFree(bag)
-        fam = Num(fam) or 0
-        if fam ~= 0 and band(fam, family) ~= 0 then slots = slots + (Num(CNumSlots(bag)) or 0) end
+local function SlotCount(bag, slot)
+    if C_Container and C_Container.GetContainerItemInfo then
+        local t = C_Container.GetContainerItemInfo(bag, slot)
+        return t and Num(t.stackCount) or 0
     end
-    return slots * stack
+    if GetContainerItemInfo then
+        local _, c = GetContainerItemInfo(bag, slot)
+        return Num(c) or 0
+    end
+    return 0
+end
+
+-- Room for this ammo INSIDE the quiver / pouch only (bags of the weapon's
+-- family): empty slots x stack, plus the top-up of this ammo's partial stacks
+-- sitting in them. Returns room, total slots (0 = no quiver / pouch).
+local function PouchRoom(id, family, stack)
+    if not (family and CNumSlots and CFree and CItemID) then return 0, 0 end
+    local room, slots = 0, 0
+    for bag = 1, NUM_BAGS do
+        local free, fam = CFree(bag)
+        free, fam = Num(free) or 0, Num(fam) or 0
+        if fam ~= 0 and band(fam, family) ~= 0 then
+            local n = Num(CNumSlots(bag)) or 0
+            slots = slots + n
+            room = room + free * stack
+            if id then
+                for slot = 1, n do
+                    if Num(CItemID(bag, slot)) == id then
+                        local c = SlotCount(bag, slot)
+                        if c > 0 and c < stack then room = room + (stack - c) end
+                    end
+                end
+            end
+        end
+    end
+    return room, slots
 end
 
 -- Free room for this item: empty slots of bags that take it, plus the top-up
@@ -482,15 +508,6 @@ local function FreeRoom(id, stack, have)
     end
     local partial = (have % stack == 0) and 0 or (stack - have % stack)
     return slots * stack + partial
-end
-
-local function Target(a, stack)
-    local t = Get("amTarget") or 1000
-    if Get("amFillQuiver") and a.kind == "ammo" then
-        local cap = QuiverRoom(a.family, stack)
-        if cap > 0 then t = cap end
-    end
-    return t
 end
 
 -- The vendor index of the ammo to buy (the equipped one first).
@@ -533,16 +550,30 @@ local function BuildPlan()
     batch = math.max(1, Num(batch) or 1)
     local stack = StackSize(id)
     local have = (id == a.ammoID) and a.count or ItemCount(id)
-    local target = Target(a, stack)
-    local need = target - have
-    if need <= 0 then
-        return nil, string.format("Stocked: %s / %s", Thousands(have), Thousands(target)), true
+    local target, buy
+    local pRoom, pSlots = PouchRoom(id, a.family, stack)
+    if Get("amFillQuiver") and a.kind == "ammo" and pSlots > 0 then
+        -- Fill Quiver: only whole bundles that fit INTO the quiver / pouch, so
+        -- nothing spills into a normal bag slot (14-slot pouch, 2,790 carried:
+        -- 10 room < 200 bundle, no buy; at 2,600 one slot is free: buy 200).
+        target = have + pRoom
+        buy = math.floor(pRoom / batch) * batch
+        if buy <= 0 then
+            return nil, string.format("Quiver full: %s room left, the vendor sells %s at a time",
+                Thousands(pRoom), Thousands(batch)), true
+        end
+    else
+        target = Get("amTarget") or 1000
+        local need = target - have
+        if need <= 0 then
+            return nil, string.format("Stocked: %s / %s", Thousands(have), Thousands(target)), true
+        end
+        -- Whole bundles up to the target; the last bundle may pass it, never the bag room.
+        local room = FreeRoom(id, stack, have)
+        buy = math.ceil(need / batch) * batch
+        if buy > room then buy = math.floor(room / batch) * batch end
+        if buy <= 0 then return nil, "No bag room for more ammo" end
     end
-    -- Whole bundles up to the target; the last bundle may pass it, never the bag room.
-    local room = FreeRoom(id, stack, have)
-    local buy = math.ceil(need / batch) * batch
-    if buy > room then buy = math.floor(room / batch) * batch end
-    if buy <= 0 then return nil, "No bag room for more ammo" end
     if avail and avail >= 0 then buy = math.min(buy, avail * batch) end
     if price > 0 then
         local budget = GetMoney()
@@ -1055,8 +1086,8 @@ local function BuildPage(pageName, parent, yOffset)
 
     _, h = W:DualRow(parent, y,
         { type = "toggle", text = "Fill Quiver",
-          tooltip = "Target = the full capacity of your quiver / ammo pouch (slots x stack). "
-              .. "Without one (or thrown): Restock To.",
+          tooltip = "Buys only what fits INTO your quiver / ammo pouch, in whole vendor bundles, "
+              .. "so nothing spills into a normal bag slot. Without one (or thrown): Restock To.",
           disabled = rsOff, disabledTooltip = "Restock Button",
           getValue = function() return Get("amFillQuiver") ~= false end,
           setValue = function(v)
@@ -1117,8 +1148,8 @@ SlashCmdList.EUIAMMO = function(msg)
         Say("kind = " .. tostring(a.kind) .. ", ammo = " .. tostring(a.ammoID) .. " (" .. tostring(a.name) .. ")"
             .. ", count = " .. tostring(a.count) .. ", level = " .. LevelOf(a))
         if a.kind == "ammo" then
-            Say("quiver room = " .. QuiverRoom(a.family, a.ammoID and StackSize(a.ammoID) or 200)
-                .. ", spare in bags = " .. tostring(a.spareID))
+            local room, slots = PouchRoom(a.ammoID, a.family, a.ammoID and StackSize(a.ammoID) or 200)
+            Say("quiver / pouch = " .. slots .. " slots, room = " .. room .. ", spare in bags = " .. tostring(a.spareID))
         end
         if S.merchant then
             local plan, reason = BuildPlan()

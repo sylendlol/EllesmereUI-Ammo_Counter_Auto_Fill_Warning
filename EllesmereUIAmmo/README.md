@@ -27,8 +27,9 @@ Made for **WoW Forever** (Interface 16001) with **EllesmereUI 9.5.4**. The `.toc
 
 ### Vendor restock
 - A **Restock Ammo** button appears under the merchant window, for example `Restock Ammo +800`. Its tooltip shows what it will buy and what it costs.
-- **Target:** fills your quiver or ammo pouch to capacity (slots × stack size) by default, or buys up to a fixed amount (*Restock To*, default 1000).
-- Buys whole vendor bundles and never more than your bags can hold, your money covers, or the optional *Max Spend* cap (in gold) allows.
+- **Fill Quiver** (default): buys only what fits *into* your quiver or ammo pouch, in whole vendor bundles, so nothing spills into a normal bag slot. With a 14-slot pouch (2,800 bullets) and 2,790 carried, there is room for only 10, less than one 200-bundle, so it buys nothing. At 2,600 a slot is free and it buys 200.
+- **Restock To:** without a quiver or pouch (or with Fill Quiver off, or a thrown weapon), it buys up to a fixed amount (default 1000), using normal bag slots too.
+- Never buys more than your money covers or the optional *Max Spend* cap (in gold) allows.
 - **Best Ammo Fallback:** if the vendor doesn't sell your equipped ammo, it buys the best arrows or bullets you can use and reminds you to equip them.
 - **Auto Buy** (off by default) restocks as soon as you open the vendor, without a click.
 

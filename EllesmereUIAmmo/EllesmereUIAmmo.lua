@@ -11,8 +11,9 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 --  A client with no ammo slot has no ammo to count: hidden too.
 --
 --  Warnings when the count drops under Low / Critical, when it hits zero, and
---  when the ranged weapon needs ammo but none is equipped. A screen message
---  (RaidWarningFrame), an optional sound and an optional chat line.
+--  when the ranged weapon needs ammo but none is equipped. A screen message in
+--  EllesmereUI's shared Alerts spot (own frame, no Blizzard frame touched), an
+--  optional sound and an optional chat line. Held back while a cinematic plays.
 --
 --  Vendor: a "Restock Ammo" button under the merchant window buys up to the
 --  target (Restock To, or the free room of the quiver / ammo pouch), within
@@ -51,6 +52,8 @@ local AM_DEFAULTS = {
         amWarnScreen = true,
         amWarnSound  = true,
         amWarnChat   = false,
+        amAlertSize  = 22,          -- screen warning text size (EllesmereUI Alerts default)
+        amAlertHold  = 3,           -- seconds the screen warning stays before fading
         amWarnLogin  = true,        -- a check a few seconds after login / zoning
         amRestock    = true,        -- the button under the merchant window
         amAutoBuy    = false,       -- buys on vendor open, no click
@@ -262,6 +265,129 @@ local function LevelColor(level)
 end
 
 -------------------------------------------------------------------------------
+--  The screen warning: one line in EllesmereUI's shared Alerts spot
+--  (EllesmereUIQoL_Alerts.lua, Unlock Mode: "Alerts"), stacked under the
+--  EllesmereUI lines showing there (Unspent Talents, Combat, Potion Ready).
+--  That file's line list is local, so the line is our own frame placed the same
+--  way, in the same font. No Blizzard frame is written to: the old
+--  RaidWarningFrame message tainted Blizzard's LowHealthFrame after the intro
+--  cinematic on a fresh account ("secret number value ... EllesmereUIAmmo").
+-------------------------------------------------------------------------------
+local ALERT_SIZE  = 22                    -- EllesmereUIQoL_Alerts.lua DEFAULT_SIZE
+local ALERT_POS   = { point = "CENTER", relPoint = "CENTER", x = 0, y = 169 }
+local ALERT_GAP   = 4
+local EUI_ALERTS  = {                     -- its stack, top first
+    { id = "talent", size = "talentAlertTextSize", on = "talentAlertEnabled" },
+    { id = "combat", size = "combatAlertTextSize", on = "combatAlertEnabled" },
+    { id = "potion", size = "potionAlertTextSize", on = "potionAlertEnabled" },
+}
+local alert -- { anchor, frame, text, anim, hold }
+
+local function EDB(key) return EllesmereUIDB and EllesmereUIDB[key] end
+
+-- The Alerts anchor's spot and size, as EllesmereUIQoL_Alerts.lua places it.
+local function PlaceAlertAnchor()
+    local size = ALERT_SIZE
+    for _, d in ipairs(EUI_ALERTS) do
+        if EDB(d.on) then size = math.max(size, EDB(d.size) or ALERT_SIZE) end
+    end
+    local p = EDB("alertsPos")
+    if not (p and p.point) then p = EDB("combatAlertPos") end
+    if not (p and p.point) then p = ALERT_POS end
+    alert.anchor:SetSize(size * 7, size + 14)
+    alert.anchor:ClearAllPoints()
+    alert.anchor:SetPoint(p.point, UIParent, p.relPoint or p.point, p.x or 0, p.y or 0)
+end
+
+-- The EllesmereUI alert line frames (built on first use by its own API).
+local function EUILineFrames()
+    local A = EllesmereUI.Alerts
+    local out = {}
+    if not (A and A.Line) then return out end
+    for _, d in ipairs(EUI_ALERTS) do
+        local line = A.Line(d.id)
+        if line and line.frame then out[#out + 1] = line.frame end
+    end
+    return out
+end
+
+-- Our line goes under the EllesmereUI lines that are up.
+local function LayoutAlert()
+    if not (alert and alert.frame:IsShown()) then return end
+    PlaceAlertAnchor()
+    local offset = 0
+    for _, f in ipairs(EUILineFrames()) do
+        if f:IsShown() then offset = offset + f:GetHeight() + ALERT_GAP end
+    end
+    alert.frame:ClearAllPoints()
+    alert.frame:SetPoint("TOP", alert.anchor, "TOP", 0, -offset)
+end
+
+local function BuildAlert()
+    if alert then return end
+    alert = {}
+    local anchor = CreateFrame("Frame", nil, UIParent)
+    anchor:EnableMouse(false)
+    alert.anchor = anchor
+    local f = CreateFrame("Frame", "EUI_DworakAmmoAlert", UIParent)
+    f:SetFrameStrata("HIGH")
+    f:SetFrameLevel(60)
+    f:EnableMouse(false)
+    f:Hide()
+    local fs = f:CreateFontString(nil, "OVERLAY")
+    fs:SetFontObject(GameFontHighlightLarge) -- a font before the first SetText
+    fs:SetPoint("CENTER")
+    alert.frame, alert.text = f, fs
+    -- Fade in, hold, fade out, hide (EllesmereUI's short alert).
+    local ag = f:CreateAnimationGroup()
+    local a1 = ag:CreateAnimation("Alpha")
+    a1:SetFromAlpha(0); a1:SetToAlpha(1); a1:SetDuration(0.15); a1:SetOrder(1)
+    local a2 = ag:CreateAnimation("Alpha")
+    a2:SetFromAlpha(1); a2:SetToAlpha(1); a2:SetDuration(3); a2:SetOrder(2)
+    local a3 = ag:CreateAnimation("Alpha")
+    a3:SetFromAlpha(1); a3:SetToAlpha(0); a3:SetDuration(0.5); a3:SetOrder(3)
+    ag:SetScript("OnFinished", function() f:Hide() end)
+    f:SetScript("OnHide", function() ag:Stop() end)
+    alert.anim, alert.hold = ag, a2
+    -- Re-stack when an EllesmereUI line comes or goes while ours is up.
+    for _, lf in ipairs(EUILineFrames()) do
+        lf:HookScript("OnShow", LayoutAlert)
+        lf:HookScript("OnHide", LayoutAlert)
+    end
+end
+
+local function ShowAlert(text, r, g, b)
+    if EllesmereUI._unlockActive then return end
+    BuildAlert()
+    local size = Get("amAlertSize") or ALERT_SIZE
+    local outline = (EllesmereUI.GetFontOutlineFlag and EllesmereUI.GetFontOutlineFlag("extras")) or ""
+    if not outline:find("OUTLINE") then
+        outline = (outline == "") and "OUTLINE" or (outline .. ", OUTLINE")
+    end
+    if EllesmereUI.ApplyModuleFont then
+        EllesmereUI.ApplyModuleFont(alert.text, nil, size, "extras", outline)
+    else
+        alert.text:SetFont(STANDARD_TEXT_FONT, size, outline)
+    end
+    alert.text:SetText(text)
+    alert.text:SetTextColor(r or 1, g or 1, b or 1)
+    alert.frame:SetSize(math.max(size * 7, (alert.text:GetStringWidth() or 0) + 20), size + 14)
+    alert.hold:SetDuration(Get("amAlertHold") or 3)
+    alert.anim:Stop()
+    alert.frame:SetAlpha(1)
+    alert.frame:Show()
+    LayoutAlert()
+    alert.anim:Play()
+end
+
+-- A cinematic (the intro movie on a new character) hides the UI: wait for it.
+local function InMovie()
+    if InCinematic and InCinematic() then return true end
+    if IsInCinematicScene and IsInCinematicScene() then return true end
+    return false
+end
+
+-------------------------------------------------------------------------------
 --  Warnings
 -------------------------------------------------------------------------------
 local function Warn(level, a)
@@ -280,13 +406,7 @@ local function Warn(level, a)
         text = string.format("Ammo low: %s left", Thousands(a.count))
     end
     local r, g, b = LevelColor(level)
-    if Get("amWarnScreen") then
-        if RaidNotice_AddMessage and RaidWarningFrame then
-            RaidNotice_AddMessage(RaidWarningFrame, text, { r = r, g = g, b = b })
-        elseif UIErrorsFrame then
-            UIErrorsFrame:AddMessage(text, r, g, b)
-        end
-    end
+    if Get("amWarnScreen") then ShowAlert(text, r, g, b) end
     if Get("amWarnSound") and PlaySound then
         local kit = SOUNDKIT and SOUNDKIT.RAID_WARNING or 8959
         pcall(PlaySound, kit, "Master")
@@ -297,7 +417,20 @@ end
 -- Warn on the way down only; going up (restock, swap) just resets the level.
 local function CheckLevel(a)
     local level = LevelOf(a)
-    if S.armed and RANK[level] > RANK[S.level] then Warn(level, a) end
+    if S.armed and RANK[level] > RANK[S.level] then
+        if InMovie() then
+            -- The level stays unwarned; one recheck every 2s until the movie ends.
+            if not S.movieWait then
+                S.movieWait = true
+                C_Timer.After(2, function()
+                    S.movieWait = false
+                    CheckLevel(Scan())
+                end)
+            end
+            return
+        end
+        Warn(level, a)
+    end
     S.level = level
 end
 
@@ -1038,8 +1171,9 @@ local function BuildPage(pageName, parent, yOffset)
 
     _, h = W:DualRow(parent, y,
         { type = "toggle", text = "Screen Warning",
-          tooltip = "A raid-warning style message when the count drops under Low, under Critical, "
-              .. "to zero, or when no ammo is equipped.",
+          tooltip = "A message in EllesmereUI's Alerts spot (move it in Unlock Mode: Alerts) when the count "
+              .. "drops under Low, under Critical, to zero, or when no ammo is equipped. "
+              .. "Waits while a cinematic plays.",
           disabled = off, disabledTooltip = OFF_TIP,
           getValue = function() return Get("amWarnScreen") ~= false end,
           setValue = S_("amWarnScreen") },
@@ -1060,6 +1194,20 @@ local function BuildPage(pageName, parent, yOffset)
           disabled = off, disabledTooltip = OFF_TIP,
           getValue = function() return Get("amWarnLogin") ~= false end,
           setValue = S_("amWarnLogin") }
+    );  y = y - h
+
+    local function scrOff() return off() or Get("amWarnScreen") == false end
+    _, h = W:DualRow(parent, y,
+        { type = "slider", text = "Warning Text Size", min = 12, max = 48, step = 1,
+          tooltip = "Size of the screen warning (EllesmereUI's alerts use 22).",
+          disabled = scrOff, disabledTooltip = "Ammo Counter / Screen Warning",
+          getValue = function() return Get("amAlertSize") end,
+          setValue = S_("amAlertSize") },
+        { type = "slider", text = "Warning Duration", min = 1, max = 10, step = 0.5,
+          tooltip = "Seconds the screen warning stays before it fades.",
+          disabled = scrOff, disabledTooltip = "Ammo Counter / Screen Warning",
+          getValue = function() return Get("amAlertHold") end,
+          setValue = S_("amAlertHold") }
     );  y = y - h
 
     _, h = W:Spacer(parent, y, 20);  y = y - h

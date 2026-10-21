@@ -20,7 +20,8 @@ Made for **WoW Forever** (Interface 16001) with **EllesmereUI 9.5.4**. The `.toc
 - Hidden with a wand or no ranged weapon. Can also stay hidden until you go under Low (*Only When Low*).
 
 ### Warnings
-- A raid-warning style message on screen when the count drops under Low, under Critical, or to zero, or when no ammo is equipped.
+- A message on screen when the count drops under Low, under Critical, or to zero, or when no ammo is equipped. It appears in EllesmereUI's shared **Alerts** spot (move it in Unlock Mode: *Alerts*), below any EllesmereUI alerts showing there, in the same font. Text size and duration can be set.
+- Warnings wait while a cinematic plays (for example the intro movie of a new character).
 - Optional warning sound and chat message.
 - Optional check a few seconds after login and zoning, so you know before the first pull.
 - Warnings fire only when the count goes down. Restocking or swapping ammo resets them quietly.
@@ -65,7 +66,7 @@ Made for **WoW Forever** (Interface 16001) with **EllesmereUI 9.5.4**. The `.toc
 | --- | --- |
 | Ammo Counter | On/off, Hunters Only, Low and Critical thresholds (with colors) |
 | Display | Only When Low, Show Ammo Name, Show Icon, Icon Size, Icon Border, Border Color, Font, Text Size, Text Color, Background |
-| Warnings | Screen Warning, Warning Sound, Chat Message, Check on Login |
+| Warnings | Screen Warning, Warning Sound, Chat Message, Check on Login, Warning Text Size, Warning Duration |
 | Vendor Restock | Restock Button, Auto Buy, Fill Quiver, Restock To, Max Spend (gold), Best Ammo Fallback |
 
 Settings are saved per EllesmereUI profile in `EllesmereUIAmmoDB`.
